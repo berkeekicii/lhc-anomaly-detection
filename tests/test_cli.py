@@ -1,0 +1,57 @@
+"""Run the commands of the README one after the other on fake data."""
+
+import json
+
+from lhcad import compare, evaluate, explore, prepare, selfcheck, synthetic, train
+
+
+def test_the_whole_pipeline_from_the_command_line(tmp_path, capsys):
+    raw, processed, runs = tmp_path / "raw", tmp_path / "processed", tmp_path / "runs"
+
+    assert synthetic.main(["--out-dir", str(raw), "--n-background", "12000", "--n-signal", "1500"]) == 0
+    assert prepare.main(["--raw-dir", str(raw), "--out-dir", str(processed)]) == 0
+    assert train.main(["--processed-dir", str(processed), "--runs-dir", str(runs), "--name", "cli",
+                       "--epochs", "2", "--batch-size", "256"]) == 0
+    for name in ("model.pt", "scaler.npz", "history.json", "train_config.json", "loss.png"):
+        assert (runs / "cli" / name).exists(), name
+
+    capsys.readouterr()  # forget what the earlier commands printed
+    # no --run given: the newest run directory is picked up
+    assert evaluate.main(["--runs-dir", str(runs), "--processed-dir", str(processed)]) == 0
+    metrics = json.loads((runs / "cli" / "metrics.json").read_text())
+    assert len(metrics["signals"]) == 4
+    output = capsys.readouterr().out
+    assert "TPR@1e-05" in output and "A -> 4 leptons" in output
+
+    # a second run with other settings, then both side by side
+    assert train.main(["--processed-dir", str(processed), "--runs-dir", str(runs), "--name", "raw",
+                       "--epochs", "1", "--scaling", "none", "--hidden", "16", "--no-batch-norm"]) == 0
+    assert evaluate.main(["--run", str(runs / "raw"), "--processed-dir", str(processed)]) == 0
+    capsys.readouterr()
+    assert compare.main(["--runs-dir", str(runs), "--fpr", "1e-3"]) == 0
+    table = capsys.readouterr().out.strip().splitlines()
+    assert len(table) == 4, table  # header, separator, two runs
+    assert table[2].startswith("| cli | quantity | 32-16-3 | 5,122 |")
+    # 57->16->3->16->57 with biases: 928 + 51 + 64 + 969 = 2,012
+    assert table[3].startswith("| raw | none | 16-3 | 2,012 |")
+
+
+def test_selfcheck(capsys):
+    assert selfcheck.main([]) == 0
+    assert "Self-check passed" in capsys.readouterr().out
+
+
+def test_explore(raw_dir, tmp_path, capsys):
+    path = raw_dir / "synthetic_Ato4l.h5"
+    assert explore.main([str(path), "--events", "1000", "--figures-dir", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "FORMAT CHECK: OK" in output and "events in file: 2,000" in output
+    assert (tmp_path / "explore_synthetic_Ato4l.png").stat().st_size > 0
+
+
+def test_missing_data_gives_a_clear_error_instead_of_a_traceback(tmp_path, capsys):
+    assert prepare.main(["--raw-dir", str(tmp_path), "--out-dir", str(tmp_path / "out")]) == 1
+    assert "python -m lhcad.download" in capsys.readouterr().err
+    assert train.main(["--processed-dir", str(tmp_path)]) == 1
+    assert evaluate.main(["--runs-dir", str(tmp_path / "nothing")]) == 1
+    assert compare.main(["--runs-dir", str(tmp_path / "nothing")]) == 1
