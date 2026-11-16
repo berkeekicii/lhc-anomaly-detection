@@ -4,8 +4,9 @@ Unsupervised detection of unusual proton-proton collision events with a small
 autoencoder, on the public [ADC2021](https://mpp-hep.github.io/ADC2021/) dataset.
 
 **Status: work in progress (started November 2026).** The data pipeline, a
-baseline model, the evaluation and the tests are in place. There are no
-results on the real dataset in this repository yet; see [Results](#results).
+baseline model, the evaluation and the tests are in place, and a first
+baseline has been trained and evaluated on the real dataset; see
+[Results](#results).
 
 Author: Berke Ekici, Computer Engineering, Mersin University.
 
@@ -29,16 +30,17 @@ rate at a false-positive rate of 1e-5.
 
 All files are hosted on Zenodo under CC-BY-4.0.
 
-| Sample | Size | Events (dataset paper) | Zenodo record |
+| Sample | Size | Events in file | Zenodo record |
 |---|---|---|---|
-| Standard Model background (training) | 646.4 MB | 4,000,000 | [5046428](https://zenodo.org/records/5046428) |
+| Standard Model background (training) | 646.4 MB | 13,451,915 | [5046428](https://zenodo.org/records/5046428) |
 | A -> 4 leptons | 5.4 MB | 55,969 | [7152590](https://zenodo.org/records/7152590) |
 | LQ -> b tau | 28.6 MB | 340,544 | [7152599](https://zenodo.org/records/7152599) |
 | h0 -> tau tau | 50.2 MB | 691,283 | [7152614](https://zenodo.org/records/7152614) |
 | h+- -> tau nu | 65.9 MB | 760,272 | [7152617](https://zenodo.org/records/7152617) |
 
-Event counts are quoted from Table 1 of the dataset paper; `python -m lhcad.explore`
-prints the number actually stored in a file.
+Event counts were read from the files with `python -m lhcad.explore`. By
+default `python -m lhcad.prepare` uses a random subset of 4,000,000 background
+events.
 
 ## Quick start
 
@@ -99,11 +101,21 @@ reconstruction-error score):
 | AUC | 0.96 | 0.95 | 0.87 | 0.96 |
 | TPR at FPR 1e-5 | 3.56% | 0.05% | 0.09% | 0.06% |
 
-This repository:
+This repository, first baseline (`python -m lhcad.train --name baseline`,
+one run, seed 0; trained on 2,000,000 background events for 20 epochs,
+tested on 1,600,000 background events; run on a free Google Colab CPU with
+[the notebook](notebooks/reproduce_baseline.ipynb)):
 
-| Run | A -> 4 leptons | LQ -> b tau | h0 -> tau tau | h+- -> tau nu |
+| | A -> 4 leptons | LQ -> b tau | h0 -> tau tau | h+- -> tau nu |
 |---|---|---|---|---|
-| *no runs on the real dataset yet* | | | | |
+| AUC | 0.855 | 0.843 | 0.750 | 0.894 |
+| TPR at FPR 1e-3 | 1.660% | 0.714% | 2.125% | 6.032% |
+| TPR at FPR 1e-4 | 0.180% | 0.031% | 0.273% | 1.010% |
+| TPR at FPR 1e-5 | 0.020% | 0.002% | 0.033% | 0.098% |
+
+At FPR 1e-5 only 16 background test events lie above the threshold, so the
+last row is a rough estimate. The validation loss was still falling at
+epoch 20, so longer training is the first thing to try.
 
 The first baseline here is simpler than the reference: plain mean squared
 error over all 57 inputs (the paper ignores empty slots and treats eta and phi
