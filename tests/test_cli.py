@@ -31,9 +31,9 @@ def test_the_whole_pipeline_from_the_command_line(tmp_path, capsys):
     assert compare.main(["--runs-dir", str(runs), "--fpr", "1e-3"]) == 0
     table = capsys.readouterr().out.strip().splitlines()
     assert len(table) == 4, table  # header, separator, two runs
-    assert table[2].startswith("| cli | quantity | 32-16-3 | 5,122 |")
+    assert table[2].startswith("| cli | quantity | no | 2 (best ") and "| 32-16-3 | 5,122 |" in table[2]
     # 57->16->3->16->57 with biases: 928 + 51 + 64 + 969 = 2,012
-    assert table[3].startswith("| raw | none | 16-3 | 2,012 |")
+    assert table[3].startswith("| raw | none | no | 1 (best 1) |") and "| 16-3 | 2,012 |" in table[3]
 
 
 def test_selfcheck(capsys):

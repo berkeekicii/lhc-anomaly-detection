@@ -59,3 +59,34 @@ def test_early_stopping(tensors):
     # learning rate 0: nothing changes, so only the first epoch counts as an improvement
     history = train_model(model, x_train, x_val, epochs=10, lr=0.0, patience=2, quiet=True)
     assert len(history["val_loss"]) == 3 and history["best_epoch"] == 1
+
+
+def test_masked_error_ignores_empty_slots():
+    torch.manual_seed(0)
+    model = DenseAutoencoder(batch_norm=False, masked_loss=True).eval()
+    x = torch.zeros(2, 57)
+    x[0, 0:3] = torch.tensor([1.0, 0.0, 0.5])   # MET only
+    x[1, 0:6] = torch.tensor([1.0, 0.0, 0.5, 2.0, 0.3, -1.0])  # MET and one electron
+    squared = (model(x) - x) ** 2
+    expected = torch.stack([squared[0, :3].mean(), squared[1, :6].mean()])
+    assert torch.allclose(reconstruction_error(model, x), expected)
+    plain = DenseAutoencoder(batch_norm=False)
+    plain.load_state_dict(model.state_dict())
+    assert torch.allclose(reconstruction_error(plain, x), squared.mean(dim=1))
+
+
+def test_masked_loss_trains_and_is_restored_when_loading(tensors, tmp_path):
+    from lhcad.evaluate import load_run
+
+    x_train, x_val = tensors
+    torch.manual_seed(0)
+    model = DenseAutoencoder(masked_loss=True)
+    before = mean_loss(model, x_val)
+    history = train_model(model, x_train, x_val, epochs=2, batch_size=256, quiet=True)
+    assert history["best_val_loss"] < before
+    torch.save({"config": model.config, "state_dict": model.state_dict()}, tmp_path / "model.pt")
+    Scaler.fit(np.zeros((4, 57), dtype=np.float32) + 1).save(tmp_path / "scaler.npz")
+    loaded, _ = load_run(tmp_path)
+    assert loaded.config["masked_loss"] is True
+    assert torch.allclose(reconstruction_error(loaded, x_val[:100]),
+                          reconstruction_error(model.eval(), x_val[:100]))
