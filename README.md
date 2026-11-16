@@ -91,6 +91,7 @@ about 5 s. No GPU is needed. With less than 8 GB of RAM use
 | Model | `lhcad/model.py` | Dense autoencoder 57 -> 32 -> 16 -> 3 -> 16 -> 32 -> 57 with batch normalisation and leaky ReLU, 5,122 parameters. |
 | Train | `lhcad/train.py` | Adam, mean squared error, early stopping on the validation loss. `--masked-loss` counts only the object slots that are filled; `--device` picks CPU or GPU. |
 | Evaluate | `lhcad/evaluate.py` | Anomaly score = reconstruction error. AUC and TPR at FPR 1e-3, 1e-4 and 1e-5 per signal; ROC and score plots. |
+| Compress | `lhcad/compress.py` | Prunes and quantizes a trained model, then measures AUC, latency and size for each variant. |
 | Export | `lhcad/export.py`, `lhcad/figures.py` | Copies the small result files of a run (metrics, weights, reduced curves) into `results/` and draws the figures from them. |
 | Compare | `lhcad/compare.py` | Prints every evaluated run as one Markdown table. |
 | Check | `lhcad/selfcheck.py`, `lhcad/synthetic.py` | Runs everything on fake events in the same file format. Fake events are for testing only. |
@@ -119,8 +120,7 @@ tested on 1,600,000 background events; run on a free Google Colab CPU with
 
 At FPR 1e-5 only 16 background test events lie above the threshold, so the
 last row is a rough estimate. All files of this run, including the trained
-weights, are in [results/baseline/](results/baseline/). Every setting below was
-run once with one seed, so differences of a few thousandths in AUC may be noise.
+weights, are in [results/baseline/](results/baseline/).
 
 ### Closing the gap to the reference
 
@@ -131,17 +131,41 @@ AUC per signal:
 | Run | What changed | A -> 4 leptons | LQ -> b tau | h0 -> tau tau | h+- -> tau nu |
 |---|---|---|---|---|---|
 | [baseline](results/baseline/) | 20 epochs, 2M train events | 0.855 | 0.843 | 0.750 | 0.894 |
-| [long](results/long/) | train until the validation loss stops improving (61 epochs, best 51) | **0.856** | **0.847** | **0.753** | **0.897** |
+| [long](results/long/) | train until the validation loss stops improving | 0.856 | 0.846 | 0.753 | 0.897 |
 | [long-masked](results/long-masked/) | and ignore empty object slots in the loss | 0.798 | 0.800 | 0.733 | 0.879 |
 | [long-masked-8m](results/long-masked-8m/) | and use 8M instead of 4M background events | 0.803 | 0.802 | 0.735 | 0.881 |
 | reference | Govorkova et al., Table I | 0.96 | 0.95 | 0.87 | 0.96 |
 
-Neither longer training (+0.003 AUC at best) nor more data (+0.005 AUC over
-`long-masked`) explains the gap. Masking the empty slots, which the reference
-does, makes this model clearly **worse** (-0.05 AUC). The remaining
-differences, and the first candidates for the next experiments, are the
-reference's input normalisation and its separate treatment of eta and phi in
-the loss.
+### How large does a difference have to be?
+
+The `long` setting was repeated with four random seeds
+([results/long](results/long/), [-seed1](results/long-seed1/),
+[-seed2](results/long-seed2/), [-seed3](results/long-seed3/);
+`python scripts/seed_summary.py results/long results/long-seed*`):
+
+| | A -> 4 leptons | LQ -> b tau | h0 -> tau tau | h+- -> tau nu |
+|---|---|---|---|---|
+| mean AUC | 0.852 | 0.842 | 0.748 | 0.894 |
+| standard deviation | 0.007 | 0.007 | 0.007 | 0.005 |
+| range over 4 seeds | 0.844 - 0.859 | 0.834 - 0.850 | 0.741 - 0.755 | 0.889 - 0.900 |
+
+Changing only the seed moves the AUC by about 0.007. That is the yardstick for
+the table above:
+
+* **longer training does nothing**: the difference between `baseline` and
+  `long` is 0.001 to 0.004, which is 0.2 to 0.6 times the seed spread, so it
+  is noise. An earlier version of this file called it a small improvement;
+  that claim did not survive the repeat;
+* **more data does nothing either**: `long-masked-8m` over `long-masked` is
+  0.002 to 0.005, also inside the noise;
+* **masking the empty slots really does hurt**: 0.015 to 0.054 below the
+  4-seed mean, which is 2.2 to 7.8 times the spread.
+
+So the gap to the reference is not explained by training length, data size or
+the masked loss. The remaining differences, and the first candidates for the
+next experiments, are the reference's input normalisation and its separate
+treatment of eta and phi in the loss. Every number quoted elsewhere in this
+file comes from a single seed and carries this same +-0.007.
 
 ### How much of this is just counting objects?
 
@@ -161,6 +185,44 @@ masking result: an empty slot is exactly the signal that an object is missing,
 so a loss that skips empty slots throws that information away. Any claim that
 the model has learned something beyond multiplicity has to be measured against
 this trivial baseline.
+
+### Making the model smaller and faster
+
+A trigger has microseconds, so a model is only useful if it is small and fast.
+Three cheaper versions of the `long` model were measured
+(`python -m lhcad.compress --run runs/long`, one CPU thread,
+[results/long/compression.json](results/long/compression.json)):
+
+| Variant | Weight bytes | Non-zero bytes | us/event, one event at a time | us/event, batches of 1000 | A -> 4 leptons | LQ -> b tau | h0 -> tau tau | h+- -> tau nu |
+|---|---|---|---|---|---|---|---|---|
+| float32 | 20,488 | 20,488 | 245 | 0.7 | 0.856 | 0.846 | 0.753 | 0.897 |
+| pruned 50% | 20,488 | 10,952 | 221 | 0.7 | 0.857 | 0.847 | 0.754 | 0.898 |
+| pruned 80% | 20,488 | 5,232 | 223 | 0.7 | 0.843 | 0.830 | 0.738 | 0.888 |
+| int8 | 6,184 | 4,928 | 490 | 1.3 | 0.812 | 0.677 | 0.704 | 0.838 |
+
+Pruning removes the smallest weights and then fine-tunes the rest for five
+epochs. "Weight bytes" is the size on disk and "non-zero bytes" what it would
+be if the zeros were dropped; a dense tensor still stores a zero in four
+bytes, so only the second column moves when pruning.
+
+* **Half the weights can go for free.** At 50% the AUC is unchanged (the
+  differences are ten times smaller than the seed spread), for half the
+  non-zero weights.
+* **80% costs something real.** 0.009 to 0.016 AUC, about two seed
+  deviations, for a quarter of the non-zero weights.
+* **8-bit quantization is a bad deal here, twice over.** It loses a lot of
+  accuracy, most sharply on LQ -> b tau (0.846 to 0.677), and it is *slower*,
+  not faster: 490 us against 245 us per event. For a model this small the
+  per-call conversion between floats and integers costs more than the
+  arithmetic it saves. Quantization pays off on hardware built for integer
+  arithmetic, which a CPU running PyTorch is not.
+
+These times are PyTorch on a Colab CPU, where a single event spends most of
+its 245 us inside the framework rather than on the 5,122 multiplications: the
+same model in batches of 1000 takes 0.7 us per event, 350 times less. The
+reference implementation reaches 80 ns on an FPGA. The comparison between the
+rows is meaningful; the absolute numbers say more about PyTorch than about the
+model.
 
 | ROC curves | Anomaly score |
 |---|---|
@@ -186,7 +248,7 @@ lhcad/            the Python package (one module per step, see the table above)
 tests/            automated tests, run with "python -m pytest"
 notebooks/        reproduce_baseline.ipynb: the whole pipeline on Google Colab
 results/          small result files of each published run (metrics, weights, figures)
-scripts/          close_the_gap.sh (the experiments above), object_count_baseline.py
+scripts/          the experiment scripts and the object-count baseline
 requirements.txt  the libraries the project needs
 data/             created by the download and prepare steps (not in git)
 runs/             one folder per trained model (not in git)
@@ -197,19 +259,20 @@ runs/             one folder per trained model (not in git)
 1. ~~Reproduce the baseline on the real dataset.~~ Done; the gap to the
    reference is measured and is not explained by training length, data size or
    the masked loss.
-2. Test the two remaining differences to the reference: its input
+2. ~~Repeat the best setting with several random seeds.~~ Done; the spread is
+   +-0.007 AUC, which rules out the "longer training helps" reading.
+3. ~~Shrink the model and measure latency.~~ Done; half the weights are free,
+   8-bit quantization is not worth it on a CPU.
+4. Test the two remaining differences to the reference: its input
    normalisation and its separate treatment of eta and phi in the loss.
-   Repeat the best setting with several random seeds.
-3. Beat the object-count baseline: is there a model, or an anomaly score, that
+5. Beat the object-count baseline: is there a model, or an anomaly score, that
    separates the signals by more than event multiplicity?
-4. Shrink the model (quantization, pruning) and measure detection performance
-   against inference latency on a CPU.
-5. Serve the model behind a small API in a container, with latency measurements.
-6. Apply the same method to a second domain (vehicle or electric-bus telemetry).
+6. Serve the model behind a small API in a container, with latency measurements.
+7. Apply the same method to a second domain (vehicle or electric-bus telemetry).
 
 ## Tests
 
-`python -m pytest` runs 42 tests in about 10 seconds. They use small fake files
+`python -m pytest` runs 48 tests in about 10 seconds. They use small fake files
 in the ADC2021 format, so they need neither the dataset nor a network connection.
 
 ## References

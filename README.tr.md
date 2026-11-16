@@ -118,13 +118,15 @@ Her adım `lhcad/` klasöründe ayrı bir dosya:
 | Ölç | `evaluate.py` | Her olaya skor verir, sinyalleri ne kadar ayırdığını hesaplar, grafik çizer. |
 | Karşılaştır | `compare.py` | Farklı çalıştırmaların sonuçlarını tek tabloda gösterir. |
 | Dışa aktar | `export.py`, `figures.py` | Sonuçları `results/` klasörüne kopyalar ve grafikleri çizer. |
+| Küçült | `compress.py` | Modeli budar ve nicelenmiş sürümünü üretir; her sürüm için ayrım, hız ve boyut ölçer. |
 | Kontrol | `selfcheck.py`, `synthetic.py` | Her şeyi sahte veriyle hızlıca dener (sadece test için). |
 
-`scripts/` klasöründe iki yardımcı var: `close_the_gap.sh` (aşağıdaki
-deneyleri sırayla çalıştırır) ve `object_count_baseline.py` (nesne sayma
-kuralının AUC'sini hesaplar).
+`scripts/` klasöründe deneyleri sırayla çalıştıran betikler
+(`close_the_gap.sh`, `seeds_and_compression.sh`) ve iki ölçüm aracı var:
+`object_count_baseline.py` (nesne sayma kuralının AUC'si) ve
+`seed_summary.py` (tohumlar arası ortalama ve sapma).
 
-`tests/` klasöründeki 42 otomatik test, kodun her parçasının doğru çalıştığını
+`tests/` klasöründeki 48 otomatik test, kodun her parçasının doğru çalıştığını
 kontrol ediyor.
 
 Bilgisayar kurmadan çalıştırmak için:
@@ -180,19 +182,40 @@ değiştirdik (`bash scripts/close_the_gap.sh`). Tablodaki sayılar AUC:
 | Çalıştırma | Ne değişti | A → 4 lepton | LQ → bτ | h0 → ττ | h± → τν |
 |---|---|---|---|---|---|
 | baseline | 20 tur, 2M olay | 0,855 | 0,843 | 0,750 | 0,894 |
-| long | hata düşmeyi bırakana kadar eğitim (61 tur, en iyi 51) | **0,856** | **0,847** | **0,753** | **0,897** |
+| long | hata düşmeyi bırakana kadar eğitim | 0,856 | 0,846 | 0,753 | 0,897 |
 | long-masked | ayrıca hatada boş yuvalar sayılmıyor | 0,798 | 0,800 | 0,733 | 0,879 |
 | long-masked-8m | ayrıca 4M yerine 8M olay | 0,803 | 0,802 | 0,735 | 0,881 |
 | makale | Govorkova ve ark. | 0,96 | 0,95 | 0,87 | 0,96 |
 
-- **Daha uzun eğitim neredeyse hiçbir şey değiştirmedi** (en fazla +0,003).
-  Demek ki fark eğitim süresinden gelmiyordu.
-- **Daha fazla veri de kurtarmadı** (+0,005).
-- **Boş yuvaları saymamak sonucu kötüleştirdi** (-0,05). Bu, makalenin yaptığı
-  bir seçimdi, ama bizim kurulumumuzda işe yaramadı. Nedeni aşağıda.
+### Bir fark ne kadar büyükse gerçektir? (Tohum deneyi)
+
+Yukarıdaki tabloda `baseline` ile `long` arasında 0,003 gibi küçük farklar var.
+Bu fark gerçek mi, yoksa sadece şans eseri mi? Bunu ölçmenin yolu, **hiçbir
+şeyi değiştirmeden** sadece rastgelelik tohumunu değiştirip aynı eğitimi
+tekrarlamak. Aynı ayarı dört tohumla çalıştırdık:
+
+| | A → 4 lepton | LQ → bτ | h0 → ττ | h± → τν |
+|---|---|---|---|---|
+| Ortalama AUC | 0,852 | 0,842 | 0,748 | 0,894 |
+| Standart sapma | 0,007 | 0,007 | 0,007 | 0,005 |
+| En düşük – en yüksek | 0,844 – 0,859 | 0,834 – 0,850 | 0,741 – 0,755 | 0,889 – 0,900 |
+
+Yani sadece tohumu değiştirmek AUC'yi yaklaşık 0,007 oynatıyor. Bu, ölçüm
+cetvelimiz. Şimdi yukarıdaki tabloyu bu cetvelle okuyalım:
+
+- **Uzun eğitim hiçbir şey kazandırmamış.** `baseline` ile `long` arasındaki
+  fark 0,001–0,004, yani tohum oynamasının yarısından az. Daha önce bu dosyada
+  "çok az da olsa iyileşti" yazmıştım; tekrar deneyi bunu çürüttü.
+- **Daha fazla veri de kazandırmamış.** 0,002–0,005, yine gürültünün içinde.
+- **Boş yuvaları saymamak gerçekten zarar vermiş.** Dört tohumun ortalamasının
+  0,015–0,054 altında, yani tohum oynamasının 2,2 ile 7,8 katı. Bu fark gerçek.
 
 Geriye makaleyle aramızdaki iki fark kaldı: girdi normalizasyonu ve eta/phi'nin
-hatada ayrı ele alınması. Sıradaki deneyler bunlar.
+hatada ayrı ele alınması.
+
+Bu bölümün önemli bir sonucu daha var: bu dosyadaki diğer bütün sayılar tek bir
+tohumla alındı, yani hepsinde ±0,007 belirsizlik var. Küçük farkları ciddiye
+almamak gerekiyor.
 
 ### Model aslında ne öğrendi? Sadece nesne mi sayıyor?
 
@@ -218,23 +241,66 @@ ipucunu elinden almış oluyoruz. Bu yüzden maskeli hata sonucu kötüleştirdi
 Bundan sonra "model bir şey öğrendi" demek için, bu basit jet sayma kuralını
 geçmek gerekiyor. Projenin asıl sorusu artık bu.
 
-**Sınırlamalar:** Her ayar tek bir tohumla bir kez çalıştırıldı, yani
-tablodaki küçük farklar (örneğin 0,855 ile 0,856 arası) gürültü olabilir;
-aynı ayarı farklı tohumlarla tekrarlamak gerekiyor. En sıkı ölçüde (yüz binde
-bir arka plan) eşiğin üstünde yalnızca 16-32 arka plan olayı kaldığı için o
-satırdaki sayılar kaba tahmin. Tüm veri simülasyon.
+### Modeli küçültmek ve hızlandırmak
+
+Gerçek tetikleyicide karar mikro saniyelerde verilmek zorunda, yani model
+küçük ve hızlı olmazsa işe yaramaz. Eğitilmiş modelin üç ucuz sürümünü ürettik
+ve her biri için hem ayrımı hem hızı hem boyutu ölçtük (tek CPU çekirdeği):
+
+| Sürüm | Saklanan bayt | Sıfır olmayan bayt | µs/olay (tek tek) | µs/olay (1000'lik yığın) | A → 4 lepton | LQ → bτ | h0 → ττ | h± → τν |
+|---|---|---|---|---|---|---|---|---|
+| float32 (orijinal) | 20.488 | 20.488 | 245 | 0,7 | 0,856 | 0,846 | 0,753 | 0,897 |
+| %50 budanmış | 20.488 | 10.952 | 221 | 0,7 | 0,857 | 0,847 | 0,754 | 0,898 |
+| %80 budanmış | 20.488 | 5.232 | 223 | 0,7 | 0,843 | 0,830 | 0,738 | 0,888 |
+| int8 | 6.184 | 4.928 | 490 | 1,3 | 0,812 | 0,677 | 0,704 | 0,838 |
+
+**Budama (pruning):** En küçük ağırlıkları sıfırlıyoruz, sonra kalan
+ağırlıkların toparlanması için kısa bir eğitim yapıyoruz. Dikkat: sıfırlanan
+ağırlık yine 4 bayt yer kaplıyor, çünkü bilgisayar onu normal bir sayı olarak
+saklıyor. "Sıfır olmayan bayt" sütunu, sıfırları hiç saklamasaydık ne olurdu
+onu gösteriyor. FPGA gibi donanımlarda sıfır bağlantılar gerçekten atlanabildiği
+için asıl önemli olan o sütun.
+
+**Niceleme (quantization):** Ağırlıkları 32 bit ondalık yerine 8 bit tam sayı
+olarak saklıyoruz.
+
+Sonuçlar:
+
+- **Ağırlıkların yarısı bedava gidiyor.** %50 budamada AUC hiç değişmiyor
+  (fark, tohum oynamasının onda biri kadar), ama sıfır olmayan ağırlık sayısı
+  yarıya iniyor.
+- **%80 budama bir bedel istiyor.** 0,009–0,016 AUC kaybı, yani iki tohum
+  sapması kadar. Karşılığında ağırlıkların dörtte biri kalıyor.
+- **int8 burada iki kere kötü bir anlaşma.** Hem ayrımı belirgin biçimde
+  bozuyor (LQ → bτ'da 0,846'dan 0,677'ye düşüyor), hem de **daha hızlı değil,
+  daha yavaş**: olay başına 245 µs yerine 490 µs. Model bu kadar küçükken
+  ondalık ile tam sayı arasındaki dönüştürme maliyeti, kazandırdığı
+  hesaplamadan fazla oluyor. Niceleme tam sayı hesaplama için tasarlanmış
+  donanımda işe yarar; PyTorch çalıştıran bir CPU öyle bir donanım değil.
+
+Bu sayıları doğru okumak için: ölçtüğümüz şey Colab'de bir CPU üzerinde
+PyTorch. Tek bir olayın 245 µs'sinin büyük kısmı 5.122 çarpmada değil,
+PyTorch'un kendi iç işlerinde geçiyor. Aynı modeli 1000'lik yığınlarla
+çalıştırınca olay başına 0,7 µs'ye iniyor, yani 350 kat az. Makale FPGA'da
+80 nanosaniyeye iniyor. Anlamlı olan satırlar arası karşılaştırma; mutlak
+sayılar modelden çok PyTorch hakkında bilgi veriyor.
+
+**Sınırlamalar:** En sıkı ölçüde (yüz binde bir arka plan) eşiğin üstünde
+yalnızca 16-32 arka plan olayı kaldığı için o satırdaki sayılar kaba tahmin.
+Tüm veri simülasyon. Tohum belirsizliği aşağıda ayrı bir bölümde ölçülüyor.
 
 ## 7. Sırada ne var?
 
 1. ~~Daha uzun eğitim ve daha fazla veri.~~ Yapıldı, farkı açıklamadı.
-2. Makaleyle kalan iki farkı denemek: girdi normalizasyonu ve eta/phi'nin
-   hatada ayrı ele alınması. En iyi ayarı farklı tohumlarla tekrarlamak.
-3. Jet sayma kuralını geçmek: nesne sayısından fazlasını kullanan bir model ya
+2. ~~Farklı tohumlarla tekrarlamak.~~ Yapıldı, sapma ±0,007 çıktı.
+3. ~~Modeli küçültmek ve hız ölçmek.~~ Yapıldı, ağırlıkların yarısı bedava,
+   int8 CPU'da işe yaramıyor.
+4. Makaleyle kalan iki farkı denemek: girdi normalizasyonu ve eta/phi'nin
+   hatada ayrı ele alınması.
+5. Jet sayma kuralını geçmek: nesne sayısından fazlasını kullanan bir model ya
    da anomali skoru bulmak.
-4. Modeli küçültmek (kuantizasyon, budama) ve hız ölçmek: gerçek tetikleyicide
-   karar mikro saniyelerde verilmek zorunda.
-5. Modeli küçük bir servis olarak sunmak.
-6. Aynı yöntemi başka bir alana uygulamak (araç veya elektrikli otobüs verisi).
+6. Modeli küçük bir servis olarak sunmak.
+7. Aynı yöntemi başka bir alana uygulamak (araç veya elektrikli otobüs verisi).
 
 ## Kaynaklar
 
