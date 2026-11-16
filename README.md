@@ -3,6 +3,8 @@
 Unsupervised detection of unusual proton-proton collision events with a small
 autoencoder, on the public [ADC2021](https://mpp-hep.github.io/ADC2021/) dataset.
 
+Türkçe açıklama: [README.tr.md](README.tr.md)
+
 **Status: work in progress (started November 2026).** The data pipeline, a
 baseline model, the evaluation and the tests are in place, and a first
 baseline has been trained and evaluated on the real dataset; see
@@ -89,6 +91,7 @@ about 5 s. No GPU is needed. With less than 8 GB of RAM use
 | Model | `lhcad/model.py` | Dense autoencoder 57 -> 32 -> 16 -> 3 -> 16 -> 32 -> 57 with batch normalisation and leaky ReLU, 5,122 parameters. |
 | Train | `lhcad/train.py` | Adam, mean squared error, early stopping on the validation loss. |
 | Evaluate | `lhcad/evaluate.py` | Anomaly score = reconstruction error. AUC and TPR at FPR 1e-3, 1e-4 and 1e-5 per signal; ROC and score plots. |
+| Export | `lhcad/export.py`, `lhcad/figures.py` | Copies the small result files of a run (metrics, weights, reduced curves) into `results/` and draws the figures from them. |
 | Check | `lhcad/selfcheck.py`, `lhcad/synthetic.py` | Runs everything on fake events in the same file format. Fake events are for testing only. |
 
 ## Results
@@ -117,6 +120,18 @@ At FPR 1e-5 only 16 background test events lie above the threshold, so the
 last row is a rough estimate. The validation loss was still falling at
 epoch 20, so longer training is the first thing to try.
 
+All files of this run, including the trained weights, are in
+[results/baseline/](results/baseline/).
+
+| ROC curves | Anomaly score |
+|---|---|
+| ![ROC curves](results/baseline/roc.png) | ![Anomaly score distributions](results/baseline/scores.png) |
+
+How the four signals differ from the background in the input data (first
+200,000 events of each file):
+
+![Input data overview](results/baseline/inputs.png)
+
 The first baseline here is simpler than the reference: plain mean squared
 error over all 57 inputs (the paper ignores empty slots and treats eta and phi
 separately), one global scaling per quantity (the paper normalises with batch
@@ -131,6 +146,7 @@ project.
 lhcad/            the Python package (one module per step, see the table above)
 tests/            automated tests, run with "python -m pytest"
 notebooks/        reproduce_baseline.ipynb: the whole pipeline on Google Colab
+results/          small result files of each published run (metrics, weights, figures)
 requirements.txt  the libraries the project needs
 data/             created by the download and prepare steps (not in git)
 runs/             one folder per trained model (not in git)
@@ -147,7 +163,7 @@ runs/             one folder per trained model (not in git)
 
 ## Tests
 
-`python -m pytest` runs 39 tests in about 10 seconds. They use small fake files
+`python -m pytest` runs 40 tests in about 10 seconds. They use small fake files
 in the ADC2021 format, so they need neither the dataset nor a network connection.
 
 ## References
