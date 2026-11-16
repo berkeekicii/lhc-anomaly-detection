@@ -1,0 +1,24 @@
+# data and results are large and can be recreated; keep them out of git
+data/
+runs/
+figures/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local helper files
+*.bat
+_runner.py
+run_log.txt
+run_status.json
+.cache/
