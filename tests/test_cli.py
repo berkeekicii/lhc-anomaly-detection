@@ -55,3 +55,42 @@ def test_missing_data_gives_a_clear_error_instead_of_a_traceback(tmp_path, capsy
     assert train.main(["--processed-dir", str(tmp_path)]) == 1
     assert evaluate.main(["--runs-dir", str(tmp_path / "nothing")]) == 1
     assert compare.main(["--runs-dir", str(tmp_path / "nothing")]) == 1
+
+
+def test_export_and_figures(tmp_path):
+    import base64
+    import io
+    import tarfile
+
+    import numpy as np
+    import pytest
+
+    from lhcad import export, figures
+
+    raw, processed, runs, results = (tmp_path / n for n in ("raw", "processed", "runs", "results"))
+    assert synthetic.main(["--out-dir", str(raw), "--n-background", "12000", "--n-signal", "1500"]) == 0
+    assert prepare.main(["--raw-dir", str(raw), "--out-dir", str(processed)]) == 0
+    assert train.main(["--processed-dir", str(processed), "--runs-dir", str(runs), "--name", "r",
+                       "--epochs", "1"]) == 0
+    assert export.main(["--run", str(runs / "r")]) == 1, "not evaluated yet"
+    assert evaluate.main(["--run", str(runs / "r"), "--processed-dir", str(processed)]) == 0
+    assert export.main(["--run", str(runs / "r"), "--processed-dir", str(processed),
+                        "--raw-dir", str(raw), "--results-dir", str(results)]) == 0
+    folder = results / "r"
+    curves = json.loads((folder / "curves.json").read_text())
+    metrics = json.loads((folder / "metrics.json").read_text())
+    # the reduced ROC curve passes exactly through the metric at FPR 1e-3
+    n_test = metrics["background_test_events"]
+    for name, curve in curves["roc"].items():
+        fpr, tpr = np.asarray(curve["fpr"]), np.asarray(curve["tpr"])
+        index = int(np.flatnonzero(np.isclose(fpr, int(1e-3 * n_test) / n_test))[0])
+        assert tpr[index] == pytest.approx(metrics["signals"][name]["tpr_at_fpr"]["0.001"])
+    assert set(curves["inputs"]["files"]) == {"background", "Ato4l", "leptoquark", "hToTauTau", "hChToTauNu"}
+
+    assert figures.main([str(folder)]) == 0
+    for name in ("loss.png", "roc.png", "scores.png", "inputs.png"):
+        assert (folder / name).stat().st_size > 0
+
+    text = export.archive_text(folder)
+    with tarfile.open(fileobj=io.BytesIO(base64.b64decode(text)), mode="r:gz") as tar:
+        assert "model.pt" in tar.getnames() and "curves.json" in tar.getnames()
