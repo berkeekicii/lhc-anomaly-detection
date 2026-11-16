@@ -1,0 +1,24 @@
+{
+  "processed_dir": "data/processed",
+  "runs_dir": "runs",
+  "name": "long",
+  "epochs": 100,
+  "batch_size": 1024,
+  "lr": 0.001,
+  "patience": 10,
+  "hidden": [
+    32,
+    16
+  ],
+  "latent_dim": 3,
+  "no_batch_norm": false,
+  "scaling": "quantity",
+  "masked_loss": false,
+  "device": "auto",
+  "max_train_events": 0,
+  "seed": 0,
+  "train_events": 2000000,
+  "val_events": 400000,
+  "parameters": 5122,
+  "torch_version": "2.14.1+cpu"
+}
