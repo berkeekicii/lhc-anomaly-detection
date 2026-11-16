@@ -20,10 +20,14 @@ from .constants import INPUT_DIM
 
 class DenseAutoencoder(nn.Module):
     def __init__(self, input_dim: int = INPUT_DIM, hidden: tuple[int, ...] = (32, 16),
-                 latent_dim: int = 3, batch_norm: bool = True, negative_slope: float = 0.3):
+                 latent_dim: int = 3, batch_norm: bool = True, negative_slope: float = 0.3,
+                 masked_loss: bool = False):
         super().__init__()
+        # masked_loss: see reconstruction_error. It is stored with the model so
+        # that training and evaluation always use the same anomaly score.
         self.config = {"input_dim": input_dim, "hidden": list(hidden), "latent_dim": latent_dim,
-                       "batch_norm": batch_norm, "negative_slope": negative_slope}
+                       "batch_norm": batch_norm, "negative_slope": negative_slope,
+                       "masked_loss": masked_loss}
 
         def block(n_in: int, n_out: int) -> list[nn.Module]:
             layers: list[nn.Module] = [nn.Linear(n_in, n_out)]
@@ -56,5 +60,18 @@ def count_parameters(model: nn.Module) -> int:
 
 
 def reconstruction_error(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
-    """Mean squared difference between input and output, one value per event."""
-    return torch.mean((model(x) - x) ** 2, dim=1)
+    """Mean squared difference between input and output, one value per event.
+
+    With masked_loss, only the object slots that are filled in the input count:
+    an event with one electron and two jets is judged on those objects and the
+    MET, not on how well the network outputs zeros for the 15 empty slots. This
+    follows Govorkova et al. (arXiv:2108.03986). It needs inputs in which an
+    empty slot is exactly zero, i.e. a scaling that does not shift the values.
+    """
+    squared = (model(x) - x) ** 2
+    if not getattr(model, "config", {}).get("masked_loss"):
+        return squared.mean(dim=1)
+    n_slots = x.shape[1] // 3
+    present = (x.reshape(-1, n_slots, 3) != 0).any(dim=2)          # (events, slots)
+    mask = present.repeat_interleave(3, dim=1).to(squared.dtype)   # (events, 57)
+    return (squared * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)

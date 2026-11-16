@@ -52,6 +52,7 @@ def train_model(model: torch.nn.Module, x_train: torch.Tensor, x_val: torch.Tens
     in a row, training stops and the best weights seen so far are restored.
     """
     shuffle = torch.Generator().manual_seed(seed)
+    device = next(model.parameters()).device
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     history = {"train_loss": [], "val_loss": [], "seconds": []}
     best_val, best_epoch, best_state, epochs_without_gain = float("inf"), 0, None, 0
@@ -59,7 +60,7 @@ def train_model(model: torch.nn.Module, x_train: torch.Tensor, x_val: torch.Tens
     for epoch in range(1, epochs + 1):
         started = time.time()
         model.train()
-        order = torch.randperm(len(x_train), generator=shuffle)
+        order = torch.randperm(len(x_train), generator=shuffle).to(device)
         running, seen = 0.0, 0
         for start in range(0, len(order), batch_size):
             batch = x_train[order[start:start + batch_size]]
@@ -114,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-batch-norm", action="store_true")
     parser.add_argument("--scaling", choices=SCALINGS, default="quantity",
                         help="how inputs are scaled, see lhcad/data.py (default: quantity)")
+    parser.add_argument("--masked-loss", action="store_true",
+                        help="ignore empty object slots in the loss and the anomaly score")
+    parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto",
+                        help="where to train; auto = a GPU if there is one")
     parser.add_argument("--max-train-events", type=int, default=0, help="0 = use all")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
@@ -124,6 +129,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {train_path} not found. Run 'python -m lhcad.prepare' first.", file=sys.stderr)
         return 1
 
+    if args.masked_loss and args.scaling == "feature":
+        print("ERROR: --masked-loss needs empty slots to stay zero; use --scaling quantity or none.",
+              file=sys.stderr)
+        return 1
+    device = "cuda" if args.device == "auto" and torch.cuda.is_available() else \
+        ("cpu" if args.device == "auto" else args.device)
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -132,13 +144,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_train_events:
         train = train[:args.max_train_events]
     scaler = Scaler.fit(train, mode=args.scaling)
-    x_train = torch.from_numpy(scaler.transform(train))
-    x_val = torch.from_numpy(scaler.transform(val))
+    x_train = torch.from_numpy(scaler.transform(train)).to(device)
+    x_val = torch.from_numpy(scaler.transform(val)).to(device)
 
     model = DenseAutoencoder(input_dim=train.shape[1], hidden=tuple(args.hidden),
-                             latent_dim=args.latent_dim, batch_norm=not args.no_batch_norm)
+                             latent_dim=args.latent_dim, batch_norm=not args.no_batch_norm,
+                             masked_loss=args.masked_loss).to(device)
     print(f"training on {len(x_train):,} events, validating on {len(x_val):,}, "
-          f"input scaling: {args.scaling}")
+          f"input scaling: {args.scaling}, masked loss: {args.masked_loss}, device: {device}")
     print(f"model: {train.shape[1]} -> {' -> '.join(map(str, args.hidden))} -> {args.latent_dim} "
           f"-> ... -> {train.shape[1]}, {count_parameters(model):,} parameters")
 
@@ -147,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run_dir = args.runs_dir / (args.name or datetime.now().strftime("run-%Y%m%d-%H%M%S"))
     run_dir.mkdir(parents=True, exist_ok=True)
+    model.cpu()
     torch.save({"config": model.config, "state_dict": model.state_dict()}, run_dir / "model.pt")
     scaler.save(run_dir / "scaler.npz")
     (run_dir / "history.json").write_text(json.dumps(history, indent=2))

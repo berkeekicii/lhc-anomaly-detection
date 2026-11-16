@@ -25,20 +25,25 @@ def collect(runs_dir) -> list[dict]:
         metrics = json.loads(metrics_path.read_text())
         config_path = metrics_path.with_name("train_config.json")
         config = json.loads(config_path.read_text()) if config_path.exists() else {}
-        rows.append({"run": metrics["run"], "metrics": metrics, "config": config})
+        history_path = metrics_path.with_name("history.json")
+        history = json.loads(history_path.read_text()) if history_path.exists() else {}
+        rows.append({"run": metrics["run"], "metrics": metrics, "config": config, "history": history})
     return rows
 
 
 def markdown_table(rows: list[dict], fpr: float = CHALLENGE_FPR) -> str:
     key = f"{fpr:g}"
     signals = [name for name in SIGNALS if any(name in row["metrics"]["signals"] for row in rows)]
-    header = ["run", "scaling", "layers", "parameters"]
+    header = ["run", "scaling", "masked", "epochs", "train events", "layers", "parameters"]
     header += [f"{DATASETS[name]['label']}: AUC / TPR@{key}" for name in signals]
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     for row in rows:
         config, metrics = row["config"], row["metrics"]
         layers = "-".join(str(n) for n in (*config.get("hidden", []), config.get("latent_dim", "?")))
-        cells = [row["run"], str(metrics.get("scaling", "?")), layers, f"{metrics['parameters']:,}"]
+        history = row.get("history") or {}
+        epochs = f"{len(history.get('val_loss', []))} (best {history.get('best_epoch', '?')})" if history else "?"
+        cells = [row["run"], str(metrics.get("scaling", "?")), "yes" if config.get("masked_loss") else "no",
+                 epochs, f"{config.get('train_events', 0):,}", layers, f"{metrics['parameters']:,}"]
         for name in signals:
             entry = metrics["signals"].get(name)
             if entry is None:

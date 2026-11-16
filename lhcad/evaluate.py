@@ -44,7 +44,8 @@ def load_run(run_dir) -> tuple[DenseAutoencoder, Scaler]:
     config = stored["config"]
     model = DenseAutoencoder(input_dim=config["input_dim"], hidden=tuple(config["hidden"]),
                              latent_dim=config["latent_dim"], batch_norm=config["batch_norm"],
-                             negative_slope=config["negative_slope"])
+                             negative_slope=config["negative_slope"],
+                             masked_loss=config.get("masked_loss", False))
     model.load_state_dict(stored["state_dict"])
     model.eval()
     return model, Scaler.load(run_dir / "scaler.npz")
