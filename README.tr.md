@@ -120,7 +120,11 @@ Her adım `lhcad/` klasöründe ayrı bir dosya:
 | Dışa aktar | `export.py`, `figures.py` | Sonuçları `results/` klasörüne kopyalar ve grafikleri çizer. |
 | Kontrol | `selfcheck.py`, `synthetic.py` | Her şeyi sahte veriyle hızlıca dener (sadece test için). |
 
-`tests/` klasöründeki 40 otomatik test, kodun her parçasının doğru çalıştığını
+`scripts/` klasöründe iki yardımcı var: `close_the_gap.sh` (aşağıdaki
+deneyleri sırayla çalıştırır) ve `object_count_baseline.py` (nesne sayma
+kuralının AUC'sini hesaplar).
+
+`tests/` klasöründeki 42 otomatik test, kodun her parçasının doğru çalıştığını
 kontrol ediyor.
 
 Bilgisayar kurmadan çalıştırmak için:
@@ -149,15 +153,14 @@ Bu sonuçlardan çıkanlar:
    şansın açıkça üstünde ayırıyor. Örneğin h± → τν için: arka plan olaylarının
    yalnızca binde birini tutan bir eşikte sinyal olaylarının yüzde 6'sı
    yakalanıyor, yani sinyal 60 kat zenginleşiyor.
-2. **Henüz makalenin gerisindeyiz.** AUC farkı 0,07–0,12. Makale daha uzun
-   eğitiyor (100 epoch'a kadar), boş yuvaları hata hesabına katmıyor ve 8 milyon
-   olay kullanıyor. Bizde doğrulama hatası 20. epoch'ta hâlâ düşüyordu, yani
-   eğitim yarım kaldı.
+2. **Henüz makalenin gerisindeyiz.** AUC farkı 0,07–0,12. Bu farkın nereden
+   geldiğini aşağıda ölçtük.
 3. **Neden ayırabiliyor, grafikten görülüyor.** Aşağıdaki girdi grafiğinde,
    sinyallerde arka plana göre daha fazla lepton, daha fazla jet ve daha yüksek
    kayıp enerji var. Model bu farkları açıkça söylenmeden kendisi buluyor.
-4. **En zor sinyal h0 → ττ** (AUC 0,750). Nedenini anlamak, sonraki
-   deneylerin konularından biri.
+   Aşağıdaki son bölüm bunun ne kadarının sadece nesne saymak olduğunu ölçüyor.
+4. **En zor sinyal h0 → ττ** (AUC 0,750). Nesne sayısı bakımından arka plana en
+   çok benzeyen sinyal de bu.
 
 | ROC eğrileri | Anomali skoru dağılımı |
 |---|---|
@@ -169,18 +172,69 @@ kayıyor: model sinyalleri daha kötü geri üretiyor.
 
 ![Girdi verisi](results/baseline/inputs.png)
 
-**Sınırlamalar:** Bu tek bir çalıştırma (tek tohum). En sıkı ölçüde (yüz binde
-bir arka plan) eşiğin üstünde yalnızca 16 arka plan olayı kaldığı için o
-sütundaki sayılar kaba tahmin. Tüm veri simülasyon.
+### Farkı kapatma denemeleri
+
+Makaleyle aramızdaki farkın nereden geldiğini bulmak için üç şeyi tek tek
+değiştirdik (`bash scripts/close_the_gap.sh`). Tablodaki sayılar AUC:
+
+| Çalıştırma | Ne değişti | A → 4 lepton | LQ → bτ | h0 → ττ | h± → τν |
+|---|---|---|---|---|---|
+| baseline | 20 tur, 2M olay | 0,855 | 0,843 | 0,750 | 0,894 |
+| long | hata düşmeyi bırakana kadar eğitim (61 tur, en iyi 51) | **0,856** | **0,847** | **0,753** | **0,897** |
+| long-masked | ayrıca hatada boş yuvalar sayılmıyor | 0,798 | 0,800 | 0,733 | 0,879 |
+| long-masked-8m | ayrıca 4M yerine 8M olay | 0,803 | 0,802 | 0,735 | 0,881 |
+| makale | Govorkova ve ark. | 0,96 | 0,95 | 0,87 | 0,96 |
+
+- **Daha uzun eğitim neredeyse hiçbir şey değiştirmedi** (en fazla +0,003).
+  Demek ki fark eğitim süresinden gelmiyordu.
+- **Daha fazla veri de kurtarmadı** (+0,005).
+- **Boş yuvaları saymamak sonucu kötüleştirdi** (-0,05). Bu, makalenin yaptığı
+  bir seçimdi, ama bizim kurulumumuzda işe yaramadı. Nedeni aşağıda.
+
+Geriye makaleyle aramızdaki iki fark kaldı: girdi normalizasyonu ve eta/phi'nin
+hatada ayrı ele alınması. Sıradaki deneyler bunlar.
+
+### Model aslında ne öğrendi? Sadece nesne mi sayıyor?
+
+Sinyal olaylarında arka plana göre belirgin şekilde daha fazla nesne var:
+ortalama nesne sayısı arka planda 3,3 iken dört sinyalde 6,2 / 5,7 / 4,8 / 5,9.
+
+Bunu test etmek için en aptal "dedektörü" kurduk: olaydaki jet sayısına bakıp
+başka hiçbir şeye bakmayan bir kural
+(`python scripts/object_count_baseline.py results/long`).
+
+| | A → 4 lepton | LQ → bτ | h0 → ττ | h± → τν |
+|---|---|---|---|---|
+| Sadece jet sayısı | 0,802 | 0,865 | 0,735 | 0,873 |
+| Otokodlayıcı (long) | 0,856 | 0,846 | 0,753 | 0,897 |
+
+Sonuç dürüstçe şu: **ayrımın büyük kısmı nesne sayısından geliyor.** LQ → bτ
+sinyalinde jet saymak otokodlayıcıdan bile iyi.
+
+Bu aynı zamanda boş yuva bulmacasını da çözüyor: boş bir yuva "burada nesne
+yok" demektir. Hatada boş yuvaları saymazsak, modelin kullandığı en güçlü
+ipucunu elinden almış oluyoruz. Bu yüzden maskeli hata sonucu kötüleştirdi.
+
+Bundan sonra "model bir şey öğrendi" demek için, bu basit jet sayma kuralını
+geçmek gerekiyor. Projenin asıl sorusu artık bu.
+
+**Sınırlamalar:** Her ayar tek bir tohumla bir kez çalıştırıldı, yani
+tablodaki küçük farklar (örneğin 0,855 ile 0,856 arası) gürültü olabilir;
+aynı ayarı farklı tohumlarla tekrarlamak gerekiyor. En sıkı ölçüde (yüz binde
+bir arka plan) eşiğin üstünde yalnızca 16-32 arka plan olayı kaldığı için o
+satırdaki sayılar kaba tahmin. Tüm veri simülasyon.
 
 ## 7. Sırada ne var?
 
-1. Daha uzun eğitim ve farklı tohumlarla tekrar, sonuçların ne kadar oynadığını görmek.
-2. Ölçekleme yöntemi, gizli boyut ve boş yuvaları saymayan bir hata ile deneyler.
-3. Modeli küçültmek (kuantizasyon, budama) ve hız ölçmek: gerçek tetikleyicide
+1. ~~Daha uzun eğitim ve daha fazla veri.~~ Yapıldı, farkı açıklamadı.
+2. Makaleyle kalan iki farkı denemek: girdi normalizasyonu ve eta/phi'nin
+   hatada ayrı ele alınması. En iyi ayarı farklı tohumlarla tekrarlamak.
+3. Jet sayma kuralını geçmek: nesne sayısından fazlasını kullanan bir model ya
+   da anomali skoru bulmak.
+4. Modeli küçültmek (kuantizasyon, budama) ve hız ölçmek: gerçek tetikleyicide
    karar mikro saniyelerde verilmek zorunda.
-4. Modeli küçük bir servis olarak sunmak.
-5. Aynı yöntemi başka bir alana uygulamak (araç veya elektrikli otobüs verisi).
+5. Modeli küçük bir servis olarak sunmak.
+6. Aynı yöntemi başka bir alana uygulamak (araç veya elektrikli otobüs verisi).
 
 ## Kaynaklar
 

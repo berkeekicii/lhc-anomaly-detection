@@ -5,10 +5,10 @@ autoencoder, on the public [ADC2021](https://mpp-hep.github.io/ADC2021/) dataset
 
 Türkçe açıklama: [README.tr.md](README.tr.md)
 
-**Status: work in progress (started November 2026).** The data pipeline, a
-baseline model, the evaluation and the tests are in place, and a first
-baseline has been trained and evaluated on the real dataset; see
-[Results](#results).
+**Status: work in progress (started November 2026).** The pipeline, the model,
+the evaluation and the tests are in place; four models have been trained and
+evaluated on the real dataset, and the gap to the published reference has been
+measured but not yet closed; see [Results](#results).
 
 Author: Berke Ekici, Computer Engineering, Mersin University.
 
@@ -89,9 +89,10 @@ about 5 s. No GPU is needed. With less than 8 GB of RAM use
 | Prepare | `lhcad/prepare.py` | Reads the HDF5 files block by block, keeps (pT, eta, phi), shuffles and splits the background 50% / 10% / 40% into train / validation / test. |
 | Scale | `lhcad/data.py` | `Scaler` brings the inputs to a similar size. Three options: `quantity` (default), `feature`, `none`. |
 | Model | `lhcad/model.py` | Dense autoencoder 57 -> 32 -> 16 -> 3 -> 16 -> 32 -> 57 with batch normalisation and leaky ReLU, 5,122 parameters. |
-| Train | `lhcad/train.py` | Adam, mean squared error, early stopping on the validation loss. |
+| Train | `lhcad/train.py` | Adam, mean squared error, early stopping on the validation loss. `--masked-loss` counts only the object slots that are filled; `--device` picks CPU or GPU. |
 | Evaluate | `lhcad/evaluate.py` | Anomaly score = reconstruction error. AUC and TPR at FPR 1e-3, 1e-4 and 1e-5 per signal; ROC and score plots. |
 | Export | `lhcad/export.py`, `lhcad/figures.py` | Copies the small result files of a run (metrics, weights, reduced curves) into `results/` and draws the figures from them. |
+| Compare | `lhcad/compare.py` | Prints every evaluated run as one Markdown table. |
 | Check | `lhcad/selfcheck.py`, `lhcad/synthetic.py` | Runs everything on fake events in the same file format. Fake events are for testing only. |
 
 ## Results
@@ -117,11 +118,49 @@ tested on 1,600,000 background events; run on a free Google Colab CPU with
 | TPR at FPR 1e-5 | 0.020% | 0.002% | 0.033% | 0.098% |
 
 At FPR 1e-5 only 16 background test events lie above the threshold, so the
-last row is a rough estimate. The validation loss was still falling at
-epoch 20, so longer training is the first thing to try.
+last row is a rough estimate. All files of this run, including the trained
+weights, are in [results/baseline/](results/baseline/). Every setting below was
+run once with one seed, so differences of a few thousandths in AUC may be noise.
 
-All files of this run, including the trained weights, are in
-[results/baseline/](results/baseline/).
+### Closing the gap to the reference
+
+Three of the differences listed above were removed one at a time
+(`bash scripts/close_the_gap.sh`), to see which of them the gap is made of.
+AUC per signal:
+
+| Run | What changed | A -> 4 leptons | LQ -> b tau | h0 -> tau tau | h+- -> tau nu |
+|---|---|---|---|---|---|
+| [baseline](results/baseline/) | 20 epochs, 2M train events | 0.855 | 0.843 | 0.750 | 0.894 |
+| [long](results/long/) | train until the validation loss stops improving (61 epochs, best 51) | **0.856** | **0.847** | **0.753** | **0.897** |
+| [long-masked](results/long-masked/) | and ignore empty object slots in the loss | 0.798 | 0.800 | 0.733 | 0.879 |
+| [long-masked-8m](results/long-masked-8m/) | and use 8M instead of 4M background events | 0.803 | 0.802 | 0.735 | 0.881 |
+| reference | Govorkova et al., Table I | 0.96 | 0.95 | 0.87 | 0.96 |
+
+Neither longer training (+0.003 AUC at best) nor more data (+0.005 AUC over
+`long-masked`) explains the gap. Masking the empty slots, which the reference
+does, makes this model clearly **worse** (-0.05 AUC). The remaining
+differences, and the first candidates for the next experiments, are the
+reference's input normalisation and its separate treatment of eta and phi in
+the loss.
+
+### How much of this is just counting objects?
+
+Signal events contain more objects than background events: 6.2, 5.7, 4.8 and
+5.9 objects on average for the four signals, against 3.3 for the background.
+A "detector" that looks at nothing but the number of jets in an event
+(`python scripts/object_count_baseline.py results/long`) already reaches:
+
+| | A -> 4 leptons | LQ -> b tau | h0 -> tau tau | h+- -> tau nu |
+|---|---|---|---|---|
+| jet count alone | 0.802 | 0.865 | 0.735 | 0.873 |
+| autoencoder (`long`) | 0.856 | 0.846 | 0.753 | 0.897 |
+
+So most of the separation comes from object multiplicity, and for LQ -> b tau
+counting jets alone does better than the autoencoder. This also explains the
+masking result: an empty slot is exactly the signal that an object is missing,
+so a loss that skips empty slots throws that information away. Any claim that
+the model has learned something beyond multiplicity has to be measured against
+this trivial baseline.
 
 | ROC curves | Anomaly score |
 |---|---|
@@ -147,6 +186,7 @@ lhcad/            the Python package (one module per step, see the table above)
 tests/            automated tests, run with "python -m pytest"
 notebooks/        reproduce_baseline.ipynb: the whole pipeline on Google Colab
 results/          small result files of each published run (metrics, weights, figures)
+scripts/          close_the_gap.sh (the experiments above), object_count_baseline.py
 requirements.txt  the libraries the project needs
 data/             created by the download and prepare steps (not in git)
 runs/             one folder per trained model (not in git)
@@ -154,16 +194,22 @@ runs/             one folder per trained model (not in git)
 
 ## Roadmap
 
-1. Reproduce the baseline on the real dataset; repeat with several random seeds.
-2. Study the effect of input scaling, latent size and a loss that ignores empty slots.
-3. Shrink the model (quantization, pruning) and measure detection performance
+1. ~~Reproduce the baseline on the real dataset.~~ Done; the gap to the
+   reference is measured and is not explained by training length, data size or
+   the masked loss.
+2. Test the two remaining differences to the reference: its input
+   normalisation and its separate treatment of eta and phi in the loss.
+   Repeat the best setting with several random seeds.
+3. Beat the object-count baseline: is there a model, or an anomaly score, that
+   separates the signals by more than event multiplicity?
+4. Shrink the model (quantization, pruning) and measure detection performance
    against inference latency on a CPU.
-4. Serve the model behind a small API in a container, with latency measurements.
-5. Apply the same method to a second domain (vehicle or electric-bus telemetry).
+5. Serve the model behind a small API in a container, with latency measurements.
+6. Apply the same method to a second domain (vehicle or electric-bus telemetry).
 
 ## Tests
 
-`python -m pytest` runs 40 tests in about 10 seconds. They use small fake files
+`python -m pytest` runs 42 tests in about 10 seconds. They use small fake files
 in the ADC2021 format, so they need neither the dataset nor a network connection.
 
 ## References
